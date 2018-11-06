@@ -1,3 +1,4 @@
+#train
 """
 Generic setup of the data sources and the model training. 
 
@@ -12,12 +13,16 @@ and also on
 from keras.datasets       import mnist, cifar10
 from keras.models         import Sequential
 from keras.layers         import Dense, Dropout, Flatten
-from keras.utils.np_utils import to_categorical
+from keras.utils          import to_categorical
 from keras.callbacks      import EarlyStopping, Callback
 from keras.layers         import Conv2D, MaxPooling2D
 from keras                import backend as K
+from skimage import io, color
 
 import logging
+import numpy as np
+import os
+
 
 # Helper: Early stopping.
 early_stopper = EarlyStopping( monitor='val_loss', min_delta=0.1, patience=2, verbose=0, mode='auto' )
@@ -27,126 +32,78 @@ early_stopper = EarlyStopping( monitor='val_loss', min_delta=0.1, patience=2, ve
 #In your case, you can see that your training loss is not dropping - which means you are learning nothing after each epoch. 
 #It look like there's nothing to learn in this model, aside from some trivial linear-like fit or cutoff value.
 
-def get_cifar10_mlp():
-    """Retrieve the CIFAR dataset and process the data."""
-    # Set defaults.
-    nb_classes  = 10 #dataset dependent 
-    batch_size  = 64
-    epochs      = 4
-    input_shape = (3072,) #because it's RGB
 
-    # Get the data.
-    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
-    x_train = x_train.reshape(50000, 3072)
-    x_test  = x_test.reshape(10000, 3072)
+
+def split_dataset( inputs, outpts ):
+    # Split dataset
+    test = int(len(inputs)*0.1/2)
+    train = int((len(inputs)-test)/2)
+    m = int( len(inputs)/2 )
+    y_test = outpts[:test]#.extend(outpts[m:m+test])
+    y_test.extend(outpts[m:m+test])
+    x_test = inputs[:test]#.extend( inputs[m:m+test] )
+    x_test.extend( inputs[m:m+test]  )
+
+
+    y_train = outpts[:train]#.extend(outpts[m:m+test])
+    y_train.extend(outpts[m:m+train])
+    x_train = inputs[:train]#.extend( inputs[m:m+test] )
+    x_train.extend( inputs[m:m+train]  )
+
+    x_train = np.array(x_train)
+    y_train = np.array(y_train)
+
+    x_test = np.array(x_test)
+    y_test = np.array(y_test)
+
+    return (x_train, y_train), (x_test, y_test)
+
+def load_dataset(config, ext='png'):
+    """ Load dataset
+    returns: (X, Y)
+    """
+    def srt(el):
+        return int( el.split('.')[-2].split('_')[-1] )
+  
+    Y = np.loadtxt( os.path.join( config.datadir, config.labels_filename ) )
+    
+    imgs = [ i for i in os.listdir( config.datadir ) if i.endswith(ext) ]
+    imgs.sort(key=srt)
+  
+    X = []
+    for i in imgs:
+        img = io.imread(  os.path.join( config.datadir, i ), asGray=True )
+        X.append( img )
+    
+    ## 50% WITH + 50% WITHOUT
+    inputs = []
+    outpts = []    
+    for x, y in zip( X, Y ):
+        if y == 1.0:
+            inputs.append( x )
+            outpts.append( y )
+    c = 0;
+    l = len(inputs)
+    for x, y in zip(X, Y):
+        if y == 0.0 and c < l:
+            inputs.append( x )
+            outpts.append( y )
+            c +=1
+
+    (x_train, y_train), (x_test, y_test) = split_dataset( inputs, outpts )
+    x_train = x_train.reshape(x_train.shape[0], *config.input_shape)
+    x_test  = x_test.reshape(x_test.shape[0], *config.input_shape)
     x_train = x_train.astype('float32')
     x_test  = x_test.astype('float32')
     x_train /= 255
     x_test  /= 255
 
     # convert class vectors to binary class matrices
-    y_train = to_categorical(y_train, nb_classes)
-    y_test  = to_categorical(y_test, nb_classes)
-
-    return (nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs)
-
-def get_cifar10_cnn():
-    """Retrieve the MNIST dataset and process the data."""
-    # Set defaults.
-    nb_classes = 10 #dataset dependent 
-    batch_size = 128
-    epochs     = 4
+    y_train = to_categorical(y_train, config.n_classes)
+    y_test  = to_categorical(y_test, config.n_classes)
     
-    # the data, shuffled and split between train and test sets
-    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
-    
-    # convert class vectors to binary class matrices
-    y_train = to_categorical(y_train, nb_classes)
-    y_test  = to_categorical(y_test,  nb_classes)
+    return (x_train, y_train), (x_test, y_test)
 
-    #x._train shape: (50000, 32, 32, 3)
-    #input shape (32, 32, 3)
-    input_shape = x_train.shape[1:]
-
-    #print('x_train shape:', x_train.shape)
-    #print(x_train.shape[0], 'train samples')
-    #print(x_test.shape[0], 'test samples')
-    #print('input shape', input_shape)
-   
-    x_train = x_train.astype('float32')
-    x_test  = x_test.astype('float32')
-    x_train /= 255
-    x_test  /= 255
-
-    return (nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs)
-
-def get_mnist_mlp():
-    """Retrieve the MNIST dataset and process the data."""
-    # Set defaults.
-    nb_classes  = 10 #dataset dependent 
-    batch_size  = 64
-    epochs      = 4
-    input_shape = (784,)
-
-    # Get the data.
-    (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    x_train = x_train.reshape(60000, 784)
-    x_test  = x_test.reshape(10000, 784)
-    x_train = x_train.astype('float32')
-    x_test  = x_test.astype('float32')
-    x_train /= 255
-    x_test  /= 255
-
-    # convert class vectors to binary class matrices
-    y_train = to_categorical(y_train, nb_classes)
-    y_test  = to_categorical(y_test, nb_classes)
-
-    return (nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs)
-
-def get_mnist_cnn():
-    """Retrieve the MNIST dataset and process the data."""
-    # Set defaults.
-    nb_classes = 10 #dataset dependent 
-    batch_size = 128
-    epochs     = 4
-    
-    # Input image dimensions
-    img_rows, img_cols = 28, 28
-
-    # Get the data.
-    # the data, shuffled and split between train and test sets
-    (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    
-    if K.image_data_format() == 'channels_first':
-        x_train = x_train.reshape(x_train.shape[0], 1, img_rows, img_cols)
-        x_test = x_test.reshape(x_test.shape[0], 1, img_rows, img_cols)
-        input_shape = (1, img_rows, img_cols)
-    else:
-        x_train = x_train.reshape(x_train.shape[0], img_rows, img_cols, 1)
-        x_test = x_test.reshape(x_test.shape[0], img_rows, img_cols, 1)
-        input_shape = (img_rows, img_cols, 1)
-
-    #x_train = x_train.reshape(60000, 784)
-    #x_test  = x_test.reshape(10000, 784)
-    
-    x_train = x_train.astype('float32')
-    x_test  = x_test.astype('float32')
-    x_train /= 255
-    x_test  /= 255
-
-    #print('x_train shape:', x_train.shape)
-    #print(x_train.shape[0], 'train samples')
-    #print(x_test.shape[0], 'test samples')
-
-    # convert class vectors to binary class matrices
-    y_train = to_categorical(y_train, nb_classes)
-    y_test  = to_categorical(y_test,  nb_classes)
-
-    # convert class vectors to binary class matrices
-    #y_train = keras.utils.to_categorical(y_train, nb_classes)
-    #y_test = keras.utils.to_categorical(y_test, nb_classes)
-
-    return (nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs)
 
 def compile_model_mlp(geneparam, nb_classes, input_shape):
     """Compile a sequential model.
@@ -159,24 +116,21 @@ def compile_model_mlp(geneparam, nb_classes, input_shape):
 
     """
     # Get our network parameters.
-    nb_layers  = geneparam['nb_layers' ]
-    nb_neurons = geneparam['nb_neurons']
-    activation = geneparam['activation']
-    optimizer  = geneparam['optimizer' ]
+    ann_nb_layers  = genome.geneparam['nb_ann_layers' ]
+    ann_nb_neurons = genome.geneparam['nb_ann_neurons']
+    ann_activation = genome.geneparam['ann_activation']
+    optimizer      = genome.geneparam['optimizer']
 
-    logging.info("Architecture:%d,%s,%s,%d" % (nb_neurons, activation, optimizer, nb_layers))
+    logging.info('Architecture: ann_nb_layers: {}, ann_nb_neurons: {}, ' +
+                'ann_activation: {}, optimizer: {}'.format( ann_nb_layers, ann_nb_neurons,
+                                                            ann_activation, optimizer) )
 
     model = Sequential()
 
     # Add each layer.
-    for i in range(nb_layers):
-
-        # Need input shape for first layer.
-        if i == 0:
-            model.add(Dense(nb_neurons, activation=activation, input_shape=input_shape))
-        else:
-            model.add(Dense(nb_neurons, activation=activation))
-
+    model.add(Dense(ann_nb_neurons, activation=ann_activation, input_shape=input_shape))
+    for i in range(cnn_nb_layers):
+        model.add(Dense(ann_nb_neurons, activation=ann_activation))
         model.add(Dropout(0.2))  # hard-coded dropout for each layer
 
     # Output layer.
@@ -184,7 +138,7 @@ def compile_model_mlp(geneparam, nb_classes, input_shape):
 
     model.compile(loss='categorical_crossentropy', 
                     optimizer=optimizer,
-                    metrics=['accuracy'])
+                    metrics=['acc'])
 
     return model
 
@@ -199,40 +153,49 @@ def compile_model_cnn(genome, nb_classes, input_shape):
 
     """
     # Get our network parameters.
-    nb_layers  = genome.geneparam['nb_layers' ]
-    nb_neurons = genome.nb_neurons()
-    activation = genome.geneparam['activation']
-    optimizer  = genome.geneparam['optimizer' ]
+    cnn_nb_layers  = genome.geneparam ['cnn_nb_layers' ]
+    cnn_nb_neurons = genome.nb_neurons('cnn')
+    ann_nb_layers  = genome.geneparam ['ann_nb_layers' ]
+    ann_nb_neurons = genome.nb_neurons('ann')
+    
+    cnn_activation = genome.geneparam['cnn_activation']
+    ann_activation = genome.geneparam['ann_activation']
+    optimizer      = genome.geneparam['optimizer']
 
-    logging.info("Architecture:%s,%s,%s,%d" % (str(nb_neurons), activation, optimizer, nb_layers))
-
+    message = ('Architecture: cnn_nb_layers: {}, cnn_nb_neurons: {},' \
+                 +'ann_nb_layers: {}, ann_nb_neurons: {}, cnn_activation: {}, ' \
+                 +'ann_activation: {}, optimizer: {}').format( cnn_nb_layers, str(cnn_nb_neurons),
+                                                            ann_nb_layers, str(ann_nb_neurons),
+                                                            cnn_activation, ann_activation,
+                                                            optimizer) 
+    logging.info( message )
     model = Sequential()
 
     # Add each layer.
-    for i in range(0,nb_layers):
-        # Need input shape for first layer.
-        if i == 0:
-            model.add(Conv2D(nb_neurons[i], kernel_size = (3, 3), activation = activation, padding='same', input_shape = input_shape))
-        else:
-            model.add(Conv2D(nb_neurons[i], kernel_size = (3, 3), activation = activation))
-        
+    model.add(Conv2D(cnn_nb_neurons[0], kernel_size=(3, 3), 
+                activation=cnn_activation, padding='same', input_shape=input_shape))
+    model.add(MaxPooling2D(2))
+                 
+    for i in range(6):
+        model.add(Conv2D(cnn_nb_neurons[i], kernel_size = (3, 3), activation=cnn_activation))
         if i < 2: #otherwise we hit zero
             model.add(MaxPooling2D(pool_size=(2, 2)))
-        
         model.add(Dropout(0.2))
 
+    ## ANN MLP
     model.add(Flatten())
     # always use last nb_neurons value for dense layer
-    model.add(Dense(nb_neurons[len(nb_neurons) - 1], activation = activation))
-    model.add(Dropout(0.5))
+    for i in range(6):
+        model.add(Dense(ann_nb_neurons[i], activation=ann_activation))
+        model.add(Dropout(0.333))
     model.add(Dense(nb_classes, activation = 'softmax'))
 
     #BAYESIAN CONVOLUTIONAL NEURAL NETWORKS WITH BERNOULLI APPROXIMATE VARIATIONAL INFERENCE
     #need to read this paper
 
     model.compile(loss='categorical_crossentropy',
-              optimizer=optimizer,
-              metrics=['accuracy'])
+            optimizer=optimizer,
+            metrics=['acc'])
 
     return model
 
@@ -243,7 +206,7 @@ class LossHistory(Callback):
     def on_batch_end(self, batch, logs={}):
         self.losses.append(logs.get('loss'))
 
-def train_and_score(genome, dataset):
+def train_and_score(genome, config):
     """Train the model, return test loss.
 
     Args:
@@ -251,33 +214,17 @@ def train_and_score(genome, dataset):
         dataset (str): Dataset to use for training/evaluating
 
     """
-    logging.info("Getting Keras datasets")
-
-    if dataset   == 'cifar10_mlp':
-        nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs = get_cifar10_mlp()
-    elif dataset == 'cifar10_cnn':
-        nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs = get_cifar10_cnn()
-    elif dataset == 'mnist_mlp':
-        nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs = get_mnist_mlp()
-    elif dataset == 'mnist_cnn':
-        nb_classes, batch_size, input_shape, x_train, x_test, y_train, y_test, epochs = get_mnist_cnn()
-
-    logging.info("Compling Keras model")
-
-    if dataset   == 'cifar10_mlp':
-        model = compile_model_mlp(geneparam, nb_classes, input_shape)
-    elif dataset == 'cifar10_cnn':
-        model = compile_model_cnn(genome, nb_classes, input_shape)
-    elif dataset == 'mnist_mlp':
-        model = compile_model_mlp(geneparam, nb_classes, input_shape)
-    elif dataset == 'mnist_cnn':
-        model = compile_model_cnn(genome, nb_classes, input_shape)
-
+    (x_train, y_train), (x_test, y_test) = load_dataset( config )
+    
+    if config.model_type == 'cnn':
+        model = compile_model_cnn(genome, config.n_classes, config.input_shape)
+    else:
+        model = compile_model_mlp(genome, config.n_classes, config.input_shape)
     history = LossHistory()
 
-    model.fit(x_train, y_train,
-              batch_size=batch_size,
-              epochs=epochs,  
+    model.fit( x_train, y_train,
+              batch_size=config.batch_size,
+              epochs=config.epochs,  
               # using early stopping so no real limit - don't want to waste time on horrible architectures
               verbose=1,
               validation_data=(x_test, y_test),
@@ -287,7 +234,7 @@ def train_and_score(genome, dataset):
     score = model.evaluate(x_test, y_test, verbose=0)
 
     print('Test loss:', score[0])
-    print('Test accuracy:', score[1])
+    print('Test accuracy:', score[1], end='\n\n')
 
     K.clear_session()
     #we do not care about keeping any of this in memory - 
